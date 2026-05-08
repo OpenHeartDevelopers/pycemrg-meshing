@@ -1,0 +1,42 @@
+# meshtools3d binary manifest, consumed by pycemrg.ModelManager.
+#
+# Two entries per platform, sharing one tarball URL: one resolves the
+# `meshtools3d` binary, the other `laplace_solver`. ModelManager caches
+# downloads by URL + sha256, so the archive is fetched once.
+#
+# The bundled `lib/` directory next to `bin/` ships shared libraries
+# (libtbb, libgmp, libmpfr, ...). Runners must inject the corresponding
+# library-path env var (DYLD_LIBRARY_PATH on macOS, LD_LIBRARY_PATH on
+# Linux) before invoking either binary.
+
+meshtools3d-linux-x86_64:
+  default: "2.0.0-beta.2"
+  versions:
+    "2.0.0-beta.2":
+      url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0-beta.2/meshtools3d-2.0.0-beta.2-linux-x86_64.tar.gz"
+      sha256: "3420f7756b23f1dcf464a0c2777ac6a288d3e02ae2af1afbb0c7dd09cd25710a"
+      unzipped_target_path: "meshtools3d-2.0.0-beta.2-linux-x86_64/bin/meshtools3d"
+
+laplace_solver-linux-x86_64:
+  default: "2.0.0-beta.2"
+  versions:
+    "2.0.0-beta.2":
+      url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0-beta.2/meshtools3d-2.0.0-beta.2-linux-x86_64.tar.gz"
+      sha256: "3420f7756b23f1dcf464a0c2777ac6a288d3e02ae2af1afbb0c7dd09cd25710a"
+      unzipped_target_path: "meshtools3d-2.0.0-beta.2-linux-x86_64/bin/laplace_solver"
+
+meshtools3d-macos-arm64:
+  default: "2.0.0-beta.2"
+  versions:
+    "2.0.0-beta.2":
+      url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0-beta.2/meshtools3d-2.0.0-beta.2-macos-arm64.tar.gz"
+      sha256: "5e2d6d48e1b607a96682aa78c995dcba6dff451f542e215c26a61f7d5e19232b"
+      unzipped_target_path: "meshtools3d-2.0.0-beta.2-macos-arm64/bin/meshtools3d"
+
+laplace_solver-macos-arm64:
+  default: "2.0.0-beta.2"
+  versions:
+    "2.0.0-beta.2":
+      url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0-beta.2/meshtools3d-2.0.0-beta.2-macos-arm64.tar.gz"
+      sha256: "5e2d6d48e1b607a96682aa78c995dcba6dff451f542e215c26a61f7d5e19232b"
+      unzipped_target_path: "meshtools3d-2.0.0-beta.2-macos-arm64/bin/laplace_solver"
