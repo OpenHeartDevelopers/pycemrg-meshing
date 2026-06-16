@@ -1,0 +1,34 @@
+[segmentation]
+seg_dir = /Users/josealonsosolis-lemus/data/test_m3d/examples/sphereCoarse
+seg_name = sphere.inr
+mesh_from_segmentation = 1
+boundary_relabeling = 0
+
+[meshing]
+facet_angle = 30
+facet_size = 0.8
+facet_distance = 4
+cell_rad_edge_ratio = 2.0
+cell_size = 0.8
+rescaleFactor = 1000
+
+[laplacesolver]
+abs_toll = 1e-6
+rel_toll = 1e-6
+itr_max = 700
+dimKrilovSp = 500
+verbose = 1
+
+[others]
+eval_thickness = 0
+
+[output]
+outdir = ./myocardium_OUT
+name = heart_mesh
+out_medit = 0
+out_carp = 1
+out_carp_binary = 0
+out_vtk = 1
+out_vtk_binary = 0
+out_potential = 0
+

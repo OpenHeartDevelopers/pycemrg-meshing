@@ -23,8 +23,9 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import ClassVar, Sequence, Union
+from typing import ClassVar, Union
 
 from pycemrg.models.manager import ModelManager
 from pycemrg.system import CommandRunner
@@ -37,6 +38,39 @@ from pycemrg_meshing.tools.binaries import (
 from pycemrg_meshing.tools.parameters import MeshingParameters
 
 PathLike = Union[str, Path]
+
+
+class MacOSGatekeeperError(RuntimeError):
+    """Raised on macOS when a ``ModelManager``-downloaded binary cannot be run.
+
+    Apple Silicon SIGKILLs the prebuilt arm64 binaries until they are ad-hoc
+    signed, so we refuse to invoke a freshly downloaded build. The message
+    tells the user exactly how to sign the extracted install and re-invoke with
+    an explicit ``--binary`` / ``binary_path=`` override (which skips
+    ``ModelManager`` entirely). See ``docs/macos_gatekeeper.md``.
+    """
+
+    def __init__(self, binary: Path) -> None:
+        self.binary = binary
+        self.install_root = binary.parent.parent
+        super().__init__(self._build_message(binary, self.install_root))
+
+    @staticmethod
+    def _build_message(binary: Path, root: Path) -> str:
+        return (
+            f"meshtools3d was downloaded to:\n"
+            f"    {root}\n"
+            f"but macOS will SIGKILL it until it is ad-hoc signed. Sign it once:\n\n"
+            f'    xattr -dr com.apple.quarantine "{root}"\n'
+            f'    for f in "{root}"/lib/*.dylib; do [ -L "$f" ] && continue; '
+            f'codesign --force --sign - "$f"; done\n'
+            f'    for b in "{root}"/bin/*; do codesign --force --sign - "$b"; done\n\n'
+            f"Then re-run with the signed binary, e.g.:\n"
+            f'    pycemrg-meshing run PARFILE --binary "{binary}"\n'
+            f"or in Python:\n"
+            f'    MeshtoolsRunner(binary_path="{binary}")\n\n'
+            f"See docs/macos_gatekeeper.md for details."
+        )
 
 
 class _BinaryRunner:
@@ -71,7 +105,13 @@ class _BinaryRunner:
                 )
             return self._binary_path
         mm = self._model_manager or ModelManager(manifest_path=bundled_manifest_path())
-        return Path(mm.get_model_path(model_name_for(self.binary_name)))
+        binary = Path(mm.get_model_path(model_name_for(self.binary_name)))
+        # macOS Gatekeeper SIGKILLs the unsigned downloaded arm64 build. The
+        # download path is intentionally a stop, not a run: route the user to
+        # sign the install once and pass it back via an explicit override.
+        if sys.platform == "darwin":
+            raise MacOSGatekeeperError(binary)
+        return binary
 
     # --------------------------------------------------------------- Execution
 
@@ -94,10 +134,13 @@ class _BinaryRunner:
 
         binary = self.resolve_binary()
         env = self._library_env(binary)
-        cmd: list[str] = [str(binary)]
+        # Both meshtools3d and laplace_solver take the parameter file via the
+        # ``-f <data_file>`` flag, not positionally (v2.0.0 CLI). Passing it
+        # positionally is silently ignored and the binary falls back to its
+        # built-in defaults (e.g. looking for ``./image.inr``).
+        cmd: list[str] = [str(binary), "-f", str(par_path)]
         if extra_args:
             cmd.extend(extra_args)
-        cmd.append(str(par_path))
 
         self._runner.run(
             cmd,
@@ -147,4 +190,4 @@ class LaplaceRunner(_BinaryRunner):
     binary_name: ClassVar[BinaryName] = "laplace_solver"
 
 
-__all__ = ["MeshtoolsRunner", "LaplaceRunner"]
+__all__ = ["MeshtoolsRunner", "LaplaceRunner", "MacOSGatekeeperError"]

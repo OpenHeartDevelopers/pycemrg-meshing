@@ -40,6 +40,20 @@ pycemrg-meshing run     PARFILE [--binary PATH] [--cwd D]
 pycemrg-meshing laplace PARFILE [--binary PATH] [--cwd D]
 ```
 
+## macOS users
+
+On Apple Silicon the prebuilt binaries are unsigned, so macOS SIGKILLs them
+(`zsh: killed`) and the automatic download path stops with a
+`MacOSGatekeeperError`. The preferred workflow is to install meshtools3d
+manually, ad-hoc sign it once, and pass the path explicitly:
+
+```bash
+pycemrg-meshing run heart.par --binary /path/to/meshtools3d
+```
+
+See [docs/macos_gatekeeper.md](docs/macos_gatekeeper.md) for the signing commands
+and details.
+
 ## License
 
 MIT.

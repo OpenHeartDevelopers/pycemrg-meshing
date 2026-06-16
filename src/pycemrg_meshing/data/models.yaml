@@ -10,32 +10,48 @@
 # Linux) before invoking either binary.
 
 meshtools3d-linux-x86_64:
-  default: "2.0.0-beta.2"
+  default: "2.0.0"
   versions:
+    "2.0.0":
+      url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0/meshtools3d-2.0.0-linux-x86_64.tar.gz"
+      sha256: "e29b4d7188d50c505b3c6b302005a14d25fc86c718e4c7caaaf314c9224c72fc"  # shared with laplace_solver-linux-x86_64
+      unzipped_target_path: "meshtools3d-2.0.0-linux-x86_64/bin/meshtools3d"
     "2.0.0-beta.2":
       url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0-beta.2/meshtools3d-2.0.0-beta.2-linux-x86_64.tar.gz"
       sha256: "3420f7756b23f1dcf464a0c2777ac6a288d3e02ae2af1afbb0c7dd09cd25710a"
       unzipped_target_path: "meshtools3d-2.0.0-beta.2-linux-x86_64/bin/meshtools3d"
 
 laplace_solver-linux-x86_64:
-  default: "2.0.0-beta.2"
+  default: "2.0.0"
   versions:
+    "2.0.0":
+      url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0/meshtools3d-2.0.0-linux-x86_64.tar.gz"
+      sha256: "e29b4d7188d50c505b3c6b302005a14d25fc86c718e4c7caaaf314c9224c72fc"  # shared with meshtools3d-linux-x86_64
+      unzipped_target_path: "meshtools3d-2.0.0-linux-x86_64/bin/laplace_solver"
     "2.0.0-beta.2":
       url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0-beta.2/meshtools3d-2.0.0-beta.2-linux-x86_64.tar.gz"
       sha256: "3420f7756b23f1dcf464a0c2777ac6a288d3e02ae2af1afbb0c7dd09cd25710a"
       unzipped_target_path: "meshtools3d-2.0.0-beta.2-linux-x86_64/bin/laplace_solver"
 
 meshtools3d-macos-arm64:
-  default: "2.0.0-beta.2"
+  default: "2.0.0"
   versions:
+    "2.0.0":
+      url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0/meshtools3d-2.0.0-macos-arm64.tar.gz"
+      sha256: "21c8875bce588e74edcd25771a417149337dacb6be097f3be3e689f3b08ff8d8"  # shared with laplace_solver-macos-arm64
+      unzipped_target_path: "meshtools3d-2.0.0-macos-arm64/bin/meshtools3d"
     "2.0.0-beta.2":
       url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0-beta.2/meshtools3d-2.0.0-beta.2-macos-arm64.tar.gz"
       sha256: "5e2d6d48e1b607a96682aa78c995dcba6dff451f542e215c26a61f7d5e19232b"
       unzipped_target_path: "meshtools3d-2.0.0-beta.2-macos-arm64/bin/meshtools3d"
 
 laplace_solver-macos-arm64:
-  default: "2.0.0-beta.2"
+  default: "2.0.0"
   versions:
+    "2.0.0":
+      url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0/meshtools3d-2.0.0-macos-arm64.tar.gz"
+      sha256: "21c8875bce588e74edcd25771a417149337dacb6be097f3be3e689f3b08ff8d8"  # shared with meshtools3d-macos-arm64
+      unzipped_target_path: "meshtools3d-2.0.0-macos-arm64/bin/laplace_solver"
     "2.0.0-beta.2":
       url: "https://github.com/OpenHeartDevelopers/meshtools3d/releases/download/v2.0.0-beta.2/meshtools3d-2.0.0-beta.2-macos-arm64.tar.gz"
       sha256: "5e2d6d48e1b607a96682aa78c995dcba6dff451f542e215c26a61f7d5e19232b"
