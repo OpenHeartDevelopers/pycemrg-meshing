@@ -12,11 +12,44 @@ from __future__ import annotations
 
 import configparser
 import copy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Union
 
 PathLike = Union[str, Path]
 ParamDict = Dict[str, Dict[str, str]]
+
+
+@dataclass(frozen=True)
+class MeshingOverrides:
+    """Run-time overrides for meshtools3d's path parameters.
+
+    Each field, when not ``None``, is passed to the ``meshtools3d`` binary as
+    its native override flag (``-seg_dir`` etc.), which the binary documents as
+    *overwriting* the value in the ``.par`` data file — the supported way to
+    reuse one parameter file across many runs. ``None`` means "use the value in
+    the ``.par`` file". This is a stateless carrier: paths are stored verbatim,
+    not expanded or resolved (the orchestration layer decides that).
+    """
+
+    seg_dir: str | None = None
+    seg_name: str | None = None
+    out_dir: str | None = None
+    out_name: str | None = None
+
+    def as_cli_args(self) -> list[str]:
+        """Return the ``-flag value`` tokens for the fields that are set."""
+        mapping = {
+            "-seg_dir": self.seg_dir,
+            "-seg_name": self.seg_name,
+            "-out_dir": self.out_dir,
+            "-out_name": self.out_name,
+        }
+        args: list[str] = []
+        for flag, value in mapping.items():
+            if value is not None:
+                args.extend([flag, value])
+        return args
 
 
 # Defaults table — mirrors m3d_python_params.md §1 / §3.

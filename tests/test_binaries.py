@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import yaml
 import pytest
+import yaml
 
 from pycemrg_meshing.tools import binaries
 from pycemrg_meshing.tools.binaries import (
@@ -13,7 +13,6 @@ from pycemrg_meshing.tools.binaries import (
     model_name_for,
     resolve_platform_key,
 )
-
 
 # ---------------------------------------------------------- resolve_platform_key
 

@@ -9,10 +9,31 @@ import pytest
 
 from pycemrg_meshing.tools.parameters import (
     DEFAULT_VALUES,
+    MeshingOverrides,
     MeshingParameters,
     default_parameters,
 )
 
+
+# --------------------------------------------------------------- MeshingOverrides
+
+
+def test_overrides_default_to_none_and_emit_no_args() -> None:
+    ov = MeshingOverrides()
+    assert (ov.seg_dir, ov.seg_name, ov.out_dir, ov.out_name) == (None, None, None, None)
+    assert ov.as_cli_args() == []
+
+
+def test_overrides_emit_only_set_fields_as_native_flags() -> None:
+    ov = MeshingOverrides(seg_dir="/data/case1", out_name="run7")
+    assert ov.as_cli_args() == ["-seg_dir", "/data/case1", "-out_name", "run7"]
+
+
+def test_overrides_emit_all_four_in_canonical_order() -> None:
+    ov = MeshingOverrides(seg_dir="d", seg_name="s.inr", out_dir="o", out_name="n")
+    assert ov.as_cli_args() == [
+        "-seg_dir", "d", "-seg_name", "s.inr", "-out_dir", "o", "-out_name", "n",
+    ]
 
 # ----------------------------------------------------------------- Defaults
 

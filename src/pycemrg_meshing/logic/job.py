@@ -13,9 +13,10 @@ schema lives in ``pycemrg_meshing.tools.parameters``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Optional, Union
+from typing import Callable, Optional, Union
 
 from pycemrg_meshing.tools.parameters import MeshingParameters
 
@@ -46,7 +47,7 @@ class MeshingJob:
         output_dir: PathLike,
         output_name: str,
         parfile_path: PathLike,
-    ) -> "MeshingJob":
+    ) -> MeshingJob:
         """Build a job, normalising ``str`` paths to ``Path`` and expanding ``~``."""
         return cls(
             segmentation_path=Path(segmentation_path).expanduser(),
@@ -64,7 +65,7 @@ class MeshingJob:
         parfile_path: PathLike,
         *,
         converter: Optional[Callable[[Path, Path], Path]] = None,
-    ) -> "MeshingJob":
+    ) -> MeshingJob:
         """Build a job from any segmentation, optionally converting to ``.inr``.
 
         If ``segmentation_path`` does not end in ``.inr`` and ``converter`` is
