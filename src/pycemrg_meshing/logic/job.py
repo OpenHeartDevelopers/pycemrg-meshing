@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Union
 
-from pycemrg_meshing.tools.parameters import MeshingParameters
+from pycemrg_meshing.tools.parameters import LaplaceSolveOptions, MeshingParameters
 
 PathLike = Union[str, Path]
 Overrides = Mapping[str, Mapping[str, object]]
@@ -87,6 +87,26 @@ class MeshingJob:
             seg = Path(converter(seg, target))
         return cls.create(seg, output_dir, output_name, parfile_path)
 
+    @classmethod
+    def from_parfile(cls, parfile_path: PathLike) -> MeshingJob:
+        """Build a job by reading an existing ``.par`` file.
+
+        ``[segmentation] seg_dir`` + ``seg_name`` are joined into
+        ``segmentation_path``; ``[output] outdir`` / ``name`` become
+        ``output_dir`` / ``output_name``. Useful for the CLI, which hands the
+        runner a parfile the user already authored.
+        """
+        path = Path(parfile_path).expanduser()
+        params = MeshingParameters(config_file=path)
+        seg_dir = params.get("segmentation", "seg_dir")
+        seg_name = params.get("segmentation", "seg_name")
+        return cls.create(
+            segmentation_path=Path(seg_dir) / seg_name,
+            output_dir=params.get("output", "outdir"),
+            output_name=params.get("output", "name"),
+            parfile_path=path,
+        )
+
     # ------------------------------------------------------------- Parameters
 
     def to_parameters(
@@ -124,7 +144,13 @@ class MeshingJob:
 
     # --------------------------------------------------------- Output catalog
 
-    def expected_outputs(self, params: MeshingParameters) -> list[Path]:
+    def expected_outputs(
+        self,
+        params: MeshingParameters,
+        *,
+        output_dir: PathLike | None = None,
+        output_name: str | None = None,
+    ) -> list[Path]:
         """Files this job is expected to produce, given the parameters' flags.
 
         Only files whose corresponding ``out_*`` flag is ``"1"`` are
@@ -132,9 +158,15 @@ class MeshingJob:
         (CARP ASCII triplet, VTK ASCII, MEDIT). Binary CARP/VTK and the
         Laplace potential field are not enumerated here — extend if/when
         the upstream filenames are documented.
+
+        ``output_dir`` / ``output_name`` override this job's own values so the
+        runner can re-base the prediction onto the *effective* output location
+        when a :class:`MeshingOverrides` redirects it. Defaults reproduce the
+        job's own paths.
         """
         outputs: list[Path] = []
-        base = self.output_dir / self.output_name
+        base_dir = Path(output_dir) if output_dir is not None else self.output_dir
+        base = base_dir / (output_name if output_name is not None else self.output_name)
 
         def flag(key: str) -> bool:
             return params.get("output", key) == "1"
@@ -150,4 +182,110 @@ class MeshingJob:
         return outputs
 
 
-__all__ = ["MeshingJob"]
+@dataclass(frozen=True)
+class LaplaceSolveJob:
+    """Description of a single ``laplace_solver`` run.
+
+    Unlike :class:`MeshingJob`, the input is an *existing CARP mesh*
+    (``mesh_dir`` + ``mesh_name``), and the boundary conditions
+    (``zero_bc`` / ``one_bc`` vtx node-sets) are first-class inputs with no
+    analogue in meshtools3d. ``parfile_path`` is optional: the ``-f`` file only
+    carries ``[laplacesolver]`` tolerances, so a run can proceed without one.
+
+    Because there is no ``.par`` carrying the mesh / output / BC paths, the job
+    renders them itself via :meth:`as_cli_args` — that is the *only* place those
+    flags come from.
+    """
+
+    mesh_dir: Path
+    mesh_name: str
+    output_dir: Path
+    output_name: str
+    zero_bc: tuple[Path, ...] = ()
+    one_bc: tuple[Path, ...] = ()
+    parfile_path: Optional[Path] = None
+
+    @classmethod
+    def create(
+        cls,
+        mesh_dir: PathLike,
+        mesh_name: str,
+        output_dir: PathLike,
+        output_name: str,
+        *,
+        zero_bc: tuple[PathLike, ...] = (),
+        one_bc: tuple[PathLike, ...] = (),
+        parfile_path: Optional[PathLike] = None,
+    ) -> LaplaceSolveJob:
+        """Build a job, normalising ``str`` paths to ``Path`` and expanding ``~``."""
+        return cls(
+            mesh_dir=Path(mesh_dir).expanduser(),
+            mesh_name=mesh_name,
+            output_dir=Path(output_dir).expanduser(),
+            output_name=output_name,
+            zero_bc=tuple(Path(p).expanduser() for p in zero_bc),
+            one_bc=tuple(Path(p).expanduser() for p in one_bc),
+            parfile_path=Path(parfile_path).expanduser() if parfile_path is not None else None,
+        )
+
+    def as_cli_args(self) -> list[str]:
+        """Render the mesh / output / BC flags this run requires.
+
+        These are mandatory inputs (the binary has no ``.par`` fallback for
+        them), so they are always emitted. BC flags repeat, one per node-set.
+        """
+        args: list[str] = [
+            "-mesh_dir", str(self.mesh_dir),
+            "-mesh_name", self.mesh_name,
+            "-out_dir", str(self.output_dir),
+            "-out_name", self.output_name,
+        ]
+        for vtx in self.zero_bc:
+            args.extend(["--zero-bc", str(vtx)])
+        for vtx in self.one_bc:
+            args.extend(["--one-bc", str(vtx)])
+        return args
+
+    def expected_outputs(
+        self,
+        options: LaplaceSolveOptions | None = None,
+        *,
+        output_dir: PathLike | None = None,
+        output_name: str | None = None,
+    ) -> list[Path]:
+        """Files this run is expected to produce, given the options' flags.
+
+        Enumerated from ``m3d_api.md`` §laplace_solver "Expected outputs":
+
+        - thickness evaluation (ON by default; off with ``no_thickness``) emits
+          ``<name>.grad`` / ``.cpts`` / ``.tris``;
+        - ``vtk`` emits ``<name>.vtk``;
+        - ``potential`` *without* ``vtk`` emits ``<name>_potential.dat``;
+        - thickness *without* ``vtk`` emits ``<name>_thickness.dat``.
+
+        ``output_dir`` / ``output_name`` override this job's own values so the
+        runner can re-base onto the effective output location.
+        """
+        base_dir = Path(output_dir) if output_dir is not None else self.output_dir
+        name = output_name if output_name is not None else self.output_name
+        base = base_dir / name
+
+        thickness_ran = options is None or not options.no_thickness
+        vtk = options is not None and options.vtk
+        potential = options is not None and options.potential
+
+        outputs: list[Path] = []
+        if thickness_ran:
+            outputs.extend(
+                [base.with_suffix(".grad"), base.with_suffix(".cpts"), base.with_suffix(".tris")]
+            )
+        if vtk:
+            outputs.append(base.with_suffix(".vtk"))
+        if potential and not vtk:
+            outputs.append(base.with_name(f"{name}_potential.dat"))
+        if thickness_ran and not vtk:
+            outputs.append(base.with_name(f"{name}_thickness.dat"))
+        return outputs
+
+
+__all__ = ["MeshingJob", "LaplaceSolveJob"]

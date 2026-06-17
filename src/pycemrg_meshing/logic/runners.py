@@ -25,17 +25,23 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import ClassVar, Union
+from typing import ClassVar, Union, cast
 
 from pycemrg.models.manager import ModelManager
 from pycemrg.system import CommandRunner
 
+from pycemrg_meshing.logic.job import LaplaceSolveJob, MeshingJob
+from pycemrg_meshing.logic.results import LaplaceSolveResult, MeshingResult, OutputFile
 from pycemrg_meshing.tools.binaries import (
     BinaryName,
     bundled_manifest_path,
     model_name_for,
 )
-from pycemrg_meshing.tools.parameters import MeshingOverrides, MeshingParameters
+from pycemrg_meshing.tools.parameters import (
+    LaplaceSolveOptions,
+    MeshingOverrides,
+    MeshingParameters,
+)
 
 PathLike = Union[str, Path]
 
@@ -113,57 +119,44 @@ class _BinaryRunner:
             raise MacOSGatekeeperError(binary)
         return binary
 
-    # --------------------------------------------------------------- Execution
+    # ------------------------------------------------------------ Plumbing
 
-    def run(
+    def _invoke(
         self,
-        par_path: PathLike,
+        argv: Sequence[str],
         *,
-        cwd: PathLike | None = None,
-        overrides: MeshingOverrides | None = None,
-        extra_args: Sequence[str] | None = None,
-    ) -> Path:
-        """Invoke the binary against the given parameter file.
+        cwd: Path,
+        expected_outputs: Sequence[Path],
+    ) -> str:
+        """Resolve the binary, compose env, run, and return captured stdout.
 
-        ``overrides`` are passed to the binary as its native ``-seg_dir`` /
-        ``-seg_name`` / ``-out_dir`` / ``-out_name`` flags, which overwrite the
-        matching ``.par`` values — the documented way to reuse one parameter
-        file across runs. The ``.par`` file itself is never modified.
-
-        The binary resolves the relative paths (the ``segmentation`` input and
-        the ``[output] outdir``) against its working directory, so the chosen
-        ``cwd`` decides where files are read and written. Resolution order, using
-        the *effective* ``seg_dir`` (override if given, else the ``.par`` value):
-
-        - an explicit ``cwd`` always wins;
-        - otherwise, if the effective ``seg_dir`` is absolute, it becomes the
-          ``cwd`` so outputs co-locate with the segmentation data;
-        - otherwise the parent of ``par_path`` is used, which is the only
-          stable anchor a relative ``seg_dir`` / ``outdir`` can mean.
-
-        Returns the resolved effective ``out_dir``, computed against the same
-        ``cwd`` so the reported path matches where the binary actually wrote.
+        ``expected_outputs`` is forwarded to ``CommandRunner.run``, which raises
+        ``FileNotFoundError`` post-run if any are missing — fail-fast on a
+        silent-success binary. The whole pycemrg suite behaves this way.
         """
-        par_path = Path(par_path).expanduser().resolve()
-        if not par_path.is_file():
-            raise FileNotFoundError(f"parameter file not found: {par_path}")
-
-        run_cwd = self._resolve_cwd(par_path, cwd, overrides)
-
         binary = self.resolve_binary()
         env = self._library_env(binary)
-        # Both meshtools3d and laplace_solver take the parameter file via the
-        # ``-f <data_file>`` flag, not positionally (v2.0.0 CLI). Passing it
-        # positionally is silently ignored and the binary falls back to its
-        # built-in defaults (e.g. looking for ``./image.inr``).
-        cmd: list[str] = [str(binary), "-f", str(par_path)]
-        if overrides is not None:
-            cmd.extend(overrides.as_cli_args())
-        if extra_args:
-            cmd.extend(extra_args)
+        cmd: list[str] = [str(binary), *argv]
+        # CommandRunner is untyped (no py.typed); it returns captured stdout.
+        return cast(
+            str,
+            self._runner.run(
+                cmd, expected_outputs=list(expected_outputs), cwd=cwd, env=env
+            ),
+        )
 
-        self._runner.run(cmd, cwd=run_cwd, env=env)
-        return self._resolve_outdir(par_path, run_cwd, overrides)
+    @staticmethod
+    def _collect_outputs(paths: Sequence[Path]) -> list[OutputFile]:
+        """Stat each produced path into an :class:`OutputFile` (size in bytes).
+
+        Existence is already guaranteed by ``_invoke``'s fail-fast check on a
+        real run; a missing path here (size ``0``) only arises under a test
+        double that skips the binary.
+        """
+        return [
+            OutputFile(path=p, size=p.stat().st_size if p.exists() else 0)
+            for p in paths
+        ]
 
     # ----------------------------------------------------------------- Helpers
 
@@ -186,36 +179,39 @@ class _BinaryRunner:
         return env
 
     @staticmethod
-    def _resolve_cwd(
-        par_path: Path, cwd: PathLike | None, overrides: MeshingOverrides | None
+    def _pick_cwd(
+        primary_dir_value: str | None,
+        *,
+        cwd: PathLike | None,
+        parfile: Path | None,
     ) -> Path:
         """Pick the working directory the binary runs in.
 
-        See :meth:`run` for the resolution order. The binary applies the
-        effective ``seg_dir`` on top of this directory, so an explicit ``cwd``
-        wins, an absolute effective ``seg_dir`` co-locates outputs with the
-        data, and a relative one falls back to the par file's parent (the only
-        stable anchor, and the one cwd that never double-applies ``seg_dir``).
+        The binary resolves its relative input/output paths against this
+        directory. ``primary_dir_value`` is the effective primary *input*
+        directory (``seg_dir`` for meshtools3d, ``mesh_dir`` for laplace).
+        Resolution order:
+
+        - an explicit ``cwd`` always wins;
+        - otherwise an *absolute* primary input dir becomes the cwd, so outputs
+          co-locate with the data (and the binary never double-applies a
+          relative dir on top);
+        - otherwise the parfile's parent (the only stable anchor a relative
+          path can mean), or the process cwd if there is no parfile.
         """
         if cwd is not None:
             return Path(cwd).expanduser().resolve()
-        seg_dir_value = overrides.seg_dir if overrides and overrides.seg_dir else None
-        if seg_dir_value is None:
-            params = MeshingParameters(config_file=par_path)
-            seg_dir_value = params.get("segmentation", "seg_dir")
-        seg_dir = Path(seg_dir_value).expanduser()
-        if seg_dir.is_absolute():
-            return seg_dir.resolve()
-        return par_path.parent
+        if primary_dir_value:
+            primary = Path(primary_dir_value).expanduser()
+            if primary.is_absolute():
+                return primary.resolve()
+        if parfile is not None:
+            return parfile.parent
+        return Path.cwd()
 
     @staticmethod
-    def _resolve_outdir(
-        par_path: Path, run_cwd: Path, overrides: MeshingOverrides | None
-    ) -> Path:
-        out_dir_value = overrides.out_dir if overrides and overrides.out_dir else None
-        if out_dir_value is None:
-            params = MeshingParameters(config_file=par_path)
-            out_dir_value = params.get("output", "outdir")
+    def _resolve_outdir(out_dir_value: str, run_cwd: Path) -> Path:
+        """Resolve the effective output dir against the working directory."""
         outdir = Path(out_dir_value).expanduser()
         if not outdir.is_absolute():
             outdir = (run_cwd / outdir).resolve()
@@ -227,11 +223,107 @@ class MeshtoolsRunner(_BinaryRunner):
 
     binary_name: ClassVar[BinaryName] = "meshtools3d"
 
+    def run(
+        self,
+        job: MeshingJob,
+        *,
+        overrides: MeshingOverrides | None = None,
+        cwd: PathLike | None = None,
+    ) -> MeshingResult:
+        """Run meshtools3d for ``job`` and return a :class:`MeshingResult`.
+
+        The job's ``parfile_path`` must already exist — authoring parameters
+        (``job.write_parfile(...)``) is a separate, explicit step. ``overrides``
+        are passed to the binary as its native ``-seg_dir`` / ``-seg_name`` /
+        ``-out_dir`` / ``-out_name`` flags (plus ``--thickness-algorithm`` /
+        ``--verbose``), overwriting the matching ``.par`` values without
+        modifying the file. The ``.par`` file via ``-f`` is the binary's
+        parameter source; passing it positionally is silently ignored.
+
+        The effective output directory / name (override-or-``.par``) drive both
+        the reported ``outdir`` and the expected-output prediction, so they
+        match where the binary actually wrote.
+        """
+        par_path = job.parfile_path.expanduser().resolve()
+        if not par_path.is_file():
+            raise FileNotFoundError(f"parameter file not found: {par_path}")
+        params = MeshingParameters(config_file=par_path)
+
+        seg_dir_value = (
+            overrides.seg_dir
+            if overrides and overrides.seg_dir
+            else params.get("segmentation", "seg_dir")
+        )
+        run_cwd = self._pick_cwd(seg_dir_value, cwd=cwd, parfile=par_path)
+
+        out_dir_value = (
+            overrides.out_dir
+            if overrides and overrides.out_dir
+            else params.get("output", "outdir")
+        )
+        outdir = self._resolve_outdir(out_dir_value, run_cwd)
+        out_name = (
+            overrides.out_name
+            if overrides and overrides.out_name
+            else params.get("output", "name")
+        )
+
+        candidates = job.expected_outputs(params, output_dir=outdir, output_name=out_name)
+
+        argv: list[str] = ["-f", str(par_path)]
+        if overrides is not None:
+            argv.extend(overrides.as_cli_args())
+
+        stdout = self._invoke(argv, cwd=run_cwd, expected_outputs=candidates)
+        return MeshingResult(
+            outdir=outdir, outputs=self._collect_outputs(candidates), stdout=stdout
+        )
+
 
 class LaplaceRunner(_BinaryRunner):
     """Run the standalone ``laplace_solver``."""
 
     binary_name: ClassVar[BinaryName] = "laplace_solver"
+
+    def run(
+        self,
+        job: LaplaceSolveJob,
+        *,
+        options: LaplaceSolveOptions | None = None,
+        cwd: PathLike | None = None,
+    ) -> LaplaceSolveResult:
+        """Run laplace_solver for ``job`` and return a :class:`LaplaceSolveResult`.
+
+        The mesh / output / boundary-condition flags come from the job itself
+        (there is no ``.par`` carrying them); ``options`` adds the behavioural
+        toggles. A ``parfile_path`` is optional — when set it is passed via
+        ``-f`` and must exist. The working directory is anchored on the
+        effective ``mesh_dir`` (the binary's primary input).
+        """
+        par_path: Path | None = None
+        if job.parfile_path is not None:
+            par_path = job.parfile_path.expanduser().resolve()
+            if not par_path.is_file():
+                raise FileNotFoundError(f"parameter file not found: {par_path}")
+
+        run_cwd = self._pick_cwd(str(job.mesh_dir), cwd=cwd, parfile=par_path)
+        outdir = self._resolve_outdir(str(job.output_dir), run_cwd)
+
+        candidates = job.expected_outputs(
+            options, output_dir=outdir, output_name=job.output_name
+        )
+
+        argv: list[str] = []
+        if par_path is not None:
+            argv.extend(["-f", str(par_path)])
+        argv.extend(job.as_cli_args())
+        if options is not None:
+            argv.extend(options.as_cli_args())
+
+        stdout = self._invoke(argv, cwd=run_cwd, expected_outputs=candidates)
+        return LaplaceSolveResult(
+            outdir=outdir, outputs=self._collect_outputs(candidates), stdout=stdout
+        )
 
 
 __all__ = ["MeshtoolsRunner", "LaplaceRunner", "MacOSGatekeeperError"]

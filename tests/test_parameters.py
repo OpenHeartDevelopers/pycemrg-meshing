@@ -9,11 +9,12 @@ import pytest
 
 from pycemrg_meshing.tools.parameters import (
     DEFAULT_VALUES,
+    EXTENDED_DEFAULTS,
+    LaplaceSolveOptions,
     MeshingOverrides,
     MeshingParameters,
     default_parameters,
 )
-
 
 # --------------------------------------------------------------- MeshingOverrides
 
@@ -34,6 +35,39 @@ def test_overrides_emit_all_four_in_canonical_order() -> None:
     assert ov.as_cli_args() == [
         "-seg_dir", "d", "-seg_name", "s.inr", "-out_dir", "o", "-out_name", "n",
     ]
+
+
+def test_overrides_emit_thickness_and_verbose() -> None:
+    ov = MeshingOverrides(thickness_algorithm=1, verbose=True)
+    assert ov.as_cli_args() == ["--thickness-algorithm", "1", "--verbose"]
+
+
+# ----------------------------------------------------------- LaplaceSolveOptions
+
+
+def test_laplace_options_default_to_no_args() -> None:
+    assert LaplaceSolveOptions().as_cli_args() == []
+
+
+def test_laplace_options_render_toggles_in_order() -> None:
+    opts = LaplaceSolveOptions(
+        no_thickness=True,
+        swap_regions=True,
+        thickness_algorithm=2,
+        vtk=True,
+        vtk_binary=True,
+        potential=True,
+        verbose=True,
+    )
+    assert opts.as_cli_args() == [
+        "--no-thickness", "--swap-regions", "--thickness-algorithm", "2",
+        "--vtk", "--vtk-binary", "--potential", "--verbose",
+    ]
+
+
+def test_laplace_options_emit_only_enabled() -> None:
+    assert LaplaceSolveOptions(potential=True).as_cli_args() == ["--potential"]
+
 
 # ----------------------------------------------------------------- Defaults
 
@@ -137,6 +171,57 @@ def test_set_stringifies_numerics() -> None:
     assert p.get("meshing", "facet_size") == "0.5"
     p.set("laplacesolver", "itr_max", 1234)
     assert p.get("laplacesolver", "itr_max") == "1234"
+
+
+# ---------------------------------------------- Extended (§2.6) schema decouple
+
+
+def test_extended_key_is_settable_and_gettable() -> None:
+    p = MeshingParameters()
+    p.set("meshing", "readTheMesh", "1")  # would have raised KeyError before
+    assert p.get("meshing", "readTheMesh") == "1"
+
+
+def test_get_extended_key_returns_default_when_unset() -> None:
+    p = MeshingParameters()
+    assert p.get("others", "thickalgo") == EXTENDED_DEFAULTS["others"]["thickalgo"]
+    assert p.get("output", "debug_frequency") == "100"
+
+
+def test_unknown_key_still_raises_against_union() -> None:
+    p = MeshingParameters()
+    with pytest.raises(KeyError, match="still_not_real"):
+        p.set("meshing", "still_not_real", "1")
+
+
+def test_save_omits_extended_keys_by_default(tmp_path: Path) -> None:
+    """Bare init-par output matches parfile_builder: §2.1–§2.5 only."""
+    text = MeshingParameters().save(tmp_path / "heart.par").read_text()
+    assert "readTheMesh" not in text
+    assert "swapregions" not in text
+    assert "debug_output" not in text
+
+
+def test_save_includes_extended_key_once_set(tmp_path: Path) -> None:
+    p = MeshingParameters()
+    p.set("meshing", "readTheMesh", "1")
+    text = p.save(tmp_path / "heart.par").read_text()
+    assert "readTheMesh = 1" in text
+    # Other extended keys still absent (only the one we set is emitted).
+    assert "swapregions" not in text
+
+
+def test_load_accepts_extended_key_and_round_trips(tmp_path: Path) -> None:
+    src = MeshingParameters()
+    src.set("others", "swapregions", "1")
+    par = src.save(tmp_path / "heart.par")
+
+    loaded = MeshingParameters(config_file=par)
+    assert loaded.get("others", "swapregions") == "1"
+    # Re-saving keeps it (and still does not inject the other §2.6 keys).
+    text = loaded.save(tmp_path / "again.par").read_text()
+    assert "swapregions = 1" in text
+    assert "readTheMesh" not in text
 
 
 # ---------------------------------------------------------------- Resetting

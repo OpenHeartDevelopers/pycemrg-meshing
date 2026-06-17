@@ -14,8 +14,14 @@ from pathlib import Path
 
 import click
 
+from pycemrg_meshing.logic.job import LaplaceSolveJob, MeshingJob
+from pycemrg_meshing.logic.results import LaplaceSolveResult, MeshingResult
 from pycemrg_meshing.logic.runners import LaplaceRunner, MeshtoolsRunner
-from pycemrg_meshing.tools.parameters import MeshingOverrides, MeshingParameters
+from pycemrg_meshing.tools.parameters import (
+    LaplaceSolveOptions,
+    MeshingOverrides,
+    MeshingParameters,
+)
 
 # ------------------------------------------------------------------- Helpers
 
@@ -38,6 +44,13 @@ def _parse_set(token: str) -> tuple[str, str, str]:
 def _expand(value: str | None) -> str | None:
     """Expand a leading ``~`` in a user-supplied path; keep relative paths relative."""
     return str(Path(value).expanduser()) if value is not None else None
+
+
+def _echo_result(binary: str, result: MeshingResult | LaplaceSolveResult) -> None:
+    """Print a run's outdir and the files it produced."""
+    click.echo(f"{binary} completed; outdir={result.outdir}")
+    for out in result.outputs:
+        click.echo(f"  {out.path} ({out.size} bytes)")
 
 
 # ----------------------------------------------------------------- Top-level
@@ -118,14 +131,37 @@ def run(
         out_dir=_expand(out_dir),
         out_name=out_name,
     )
+    job = MeshingJob.from_parfile(parfile)
     runner = MeshtoolsRunner(binary_path=binary)
-    outdir = runner.run(parfile, cwd=cwd, overrides=overrides)
-    click.echo(f"meshtools3d completed; outdir={outdir}")
+    result = runner.run(job, cwd=cwd, overrides=overrides)
+    _echo_result("meshtools3d", result)
 
 
 @cli.command("laplace")
-@click.argument(
-    "parfile", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+@click.option("--mesh-dir", required=True, help="directory containing the CARP mesh (-mesh_dir)")
+@click.option("--mesh-name", required=True, help="CARP mesh basename (-mesh_name)")
+@click.option("--out-dir", required=True, help="output directory (-out_dir)")
+@click.option("--out-name", required=True, help="output basename (-out_name)")
+@click.option(
+    "--zero-bc",
+    "zero_bc",
+    multiple=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="vtx node-set assigned value 0.0 (--zero-bc); repeatable",
+)
+@click.option(
+    "--one-bc",
+    "one_bc",
+    multiple=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="vtx node-set assigned value 1.0 (--one-bc); repeatable",
+)
+@click.option(
+    "-f",
+    "--parfile",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="optional GetPot file for [laplacesolver] params",
 )
 @click.option(
     "--binary",
@@ -137,13 +173,60 @@ def run(
     "--cwd",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="working directory for the binary (default: derived from seg_dir)",
+    help="working directory for the binary (default: derived from mesh_dir)",
 )
-def laplace(parfile: Path, binary: Path | None, cwd: Path | None) -> None:
-    """Run laplace_solver against a parameter file."""
+@click.option("--vtk", is_flag=True, help="write VTK output (--vtk)")
+@click.option("--vtk-binary", is_flag=True, help="binary VTK; requires --vtk (--vtk-binary)")
+@click.option("--potential", is_flag=True, help="write potential output (--potential)")
+@click.option("--no-thickness", is_flag=True, help="solve only, skip thickness (--no-thickness)")
+@click.option("--swap-regions", is_flag=True, help="swap endo/epi direction (--swap-regions)")
+@click.option(
+    "--thickness-algo",
+    type=int,
+    default=None,
+    help="thickness algorithm: 1=Bishop, 2=Corrado (--thickness-algorithm)",
+)
+@click.option("--solver-verbose", is_flag=True, help="verbose solver output (--verbose)")
+def laplace(
+    mesh_dir: str,
+    mesh_name: str,
+    out_dir: str,
+    out_name: str,
+    zero_bc: tuple[Path, ...],
+    one_bc: tuple[Path, ...],
+    parfile: Path | None,
+    binary: Path | None,
+    cwd: Path | None,
+    vtk: bool,
+    vtk_binary: bool,
+    potential: bool,
+    no_thickness: bool,
+    swap_regions: bool,
+    thickness_algo: int | None,
+    solver_verbose: bool,
+) -> None:
+    """Run laplace_solver on an existing CARP mesh with boundary conditions."""
+    job = LaplaceSolveJob.create(
+        mesh_dir=str(Path(mesh_dir).expanduser()),
+        mesh_name=mesh_name,
+        output_dir=str(Path(out_dir).expanduser()),
+        output_name=out_name,
+        zero_bc=zero_bc,
+        one_bc=one_bc,
+        parfile_path=parfile,
+    )
+    options = LaplaceSolveOptions(
+        no_thickness=no_thickness,
+        swap_regions=swap_regions,
+        thickness_algorithm=thickness_algo,
+        vtk=vtk,
+        vtk_binary=vtk_binary,
+        potential=potential,
+        verbose=solver_verbose,
+    )
     runner = LaplaceRunner(binary_path=binary)
-    outdir = runner.run(parfile, cwd=cwd)
-    click.echo(f"laplace_solver completed; outdir={outdir}")
+    result = runner.run(job, options=options, cwd=cwd)
+    _echo_result("laplace_solver", result)
 
 
 def main(argv: list[str] | None = None) -> None:

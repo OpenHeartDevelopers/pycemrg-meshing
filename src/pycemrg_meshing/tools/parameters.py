@@ -36,6 +36,8 @@ class MeshingOverrides:
     seg_name: str | None = None
     out_dir: str | None = None
     out_name: str | None = None
+    thickness_algorithm: int | None = None
+    verbose: bool = False
 
     def as_cli_args(self) -> list[str]:
         """Return the ``-flag value`` tokens for the fields that are set."""
@@ -49,6 +51,50 @@ class MeshingOverrides:
         for flag, value in mapping.items():
             if value is not None:
                 args.extend([flag, value])
+        if self.thickness_algorithm is not None:
+            args.extend(["--thickness-algorithm", str(self.thickness_algorithm)])
+        if self.verbose:
+            args.append("--verbose")
+        return args
+
+
+@dataclass(frozen=True)
+class LaplaceSolveOptions:
+    """Behavioural toggles for the ``laplace_solver`` binary.
+
+    This is the HOW, not the WHAT: the mesh, output, and boundary-condition
+    *paths* live on :class:`pycemrg_meshing.logic.job.LaplaceSolveJob` and are
+    rendered there. Unlike ``meshtools3d``, ``laplace_solver`` has no ``.par``
+    carrying those paths (the ``-f`` file holds only ``[laplacesolver]``
+    tolerances), so there is nothing to *override* — only solver behaviour to
+    select. Stateless carrier: same input always renders the same flags.
+    """
+
+    no_thickness: bool = False
+    swap_regions: bool = False
+    thickness_algorithm: int | None = None
+    vtk: bool = False
+    vtk_binary: bool = False
+    potential: bool = False
+    verbose: bool = False
+
+    def as_cli_args(self) -> list[str]:
+        """Return the flag tokens for the toggles that are enabled."""
+        args: list[str] = []
+        if self.no_thickness:
+            args.append("--no-thickness")
+        if self.swap_regions:
+            args.append("--swap-regions")
+        if self.thickness_algorithm is not None:
+            args.extend(["--thickness-algorithm", str(self.thickness_algorithm)])
+        if self.vtk:
+            args.append("--vtk")
+        if self.vtk_binary:
+            args.append("--vtk-binary")
+        if self.potential:
+            args.append("--potential")
+        if self.verbose:
+            args.append("--verbose")
         return args
 
 
@@ -91,6 +137,42 @@ DEFAULT_VALUES: ParamDict = {
         "out_potential": "0",
     },
 }
+
+
+# Extended schema — m3d_api.md §2.6. These keys are VALID (set/get accept them,
+# get returns these defaults when unset) but are NOT seeded into the config or
+# written by ``save`` unless explicitly set. This mirrors the reference
+# ``parfile_builder``, which emits §2.1–§2.5 only and leaves §2.6 to ``--set``
+# or hand-editing. Case matters: ``readTheMesh`` is camelCase; ``swapregions`` /
+# ``thickalgo`` are lowercase (see ``optionxform = str``).
+EXTENDED_DEFAULTS: ParamDict = {
+    "meshing": {
+        "readTheMesh": "0",
+        "mesh_dir": "./",
+        "mesh_name": "mesh",
+    },
+    "others": {
+        "swapregions": "0",
+        "thickalgo": "1",
+    },
+    "output": {
+        "debug_output": "0",
+        "debug_frequency": "100",
+    },
+}
+
+
+def _valid_options(section: str) -> set[str]:
+    """All accepted keys for a section: core (§2.1–§2.5) ∪ extended (§2.6)."""
+    return set(DEFAULT_VALUES.get(section, {})) | set(EXTENDED_DEFAULTS.get(section, {}))
+
+
+def _require_valid(section: str, option: str) -> None:
+    """Raise ``KeyError`` unless ``section``/``option`` is in the union schema."""
+    if section not in DEFAULT_VALUES:
+        raise KeyError(f"unknown section: {section!r}")
+    if option not in _valid_options(section):
+        raise KeyError(f"unknown key: [{section}] {option!r}")
 
 
 class MeshingParameters:
@@ -138,20 +220,27 @@ class MeshingParameters:
     # -------------------------------------------------------------- Mutation
 
     def set(self, section: str, option: str, value: object) -> None:
-        """Set one key. Raises ``KeyError`` if section or option is unknown."""
-        if section not in DEFAULT_VALUES:
-            raise KeyError(f"unknown section: {section!r}")
-        if option not in DEFAULT_VALUES[section]:
-            raise KeyError(f"unknown key: [{section}] {option!r}")
+        """Set one key. Raises ``KeyError`` if section or option is unknown.
+
+        Validates against the union of the core (§2.1–§2.5) and extended (§2.6)
+        schemas. Setting an extended key writes it into the config, so it will
+        then be emitted by :meth:`save`.
+        """
+        _require_valid(section, option)
         self._cfg[section][option] = str(value)
 
     def get(self, section: str, option: str) -> str:
-        """Read one value as string. Raises ``KeyError`` on unknown name."""
-        if section not in DEFAULT_VALUES:
-            raise KeyError(f"unknown section: {section!r}")
-        if option not in DEFAULT_VALUES[section]:
-            raise KeyError(f"unknown key: [{section}] {option!r}")
-        return self._cfg[section][option]
+        """Read one value as string. Raises ``KeyError`` on unknown name.
+
+        An extended (§2.6) key that has not been set is not present in the
+        config; its documented default from ``EXTENDED_DEFAULTS`` is returned so
+        ``get`` stays total for every valid key.
+        """
+        _require_valid(section, option)
+        cfg_section = self._cfg[section]
+        if option in cfg_section:
+            return cfg_section[option]
+        return EXTENDED_DEFAULTS[section][option]
 
     def reset_to_defaults(self) -> None:
         """Restore the schema-default values."""
@@ -188,8 +277,9 @@ class MeshingParameters:
         for section in cfg.sections():
             if section not in DEFAULT_VALUES:
                 raise KeyError(f"{source}: unknown section {section!r}")
+            valid = _valid_options(section)
             for key in cfg[section]:
-                if key not in DEFAULT_VALUES[section]:
+                if key not in valid:
                     raise KeyError(
                         f"{source}: unknown key [{section}] {key!r}"
                     )
@@ -211,4 +301,12 @@ def default_parameters() -> ParamDict:
     return copy.deepcopy(DEFAULT_VALUES)
 
 
-__all__ = ["MeshingParameters", "DEFAULT_VALUES", "default_parameters", "ParamDict"]
+__all__ = [
+    "MeshingParameters",
+    "MeshingOverrides",
+    "LaplaceSolveOptions",
+    "DEFAULT_VALUES",
+    "EXTENDED_DEFAULTS",
+    "default_parameters",
+    "ParamDict",
+]
