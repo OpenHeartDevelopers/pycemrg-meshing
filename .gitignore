@@ -34,3 +34,5 @@ coverage.xml
 CLAUDE.md
 .claude
 .claude/**
+# MkDocs build output
+site/
